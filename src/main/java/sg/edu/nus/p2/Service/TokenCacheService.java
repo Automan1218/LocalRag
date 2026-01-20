@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 @Service
@@ -81,7 +82,7 @@ public class TokenCacheService {
         }
     }
 
-    private boolean isTokenValid(String tokenId){
+    public boolean isTokenValid(String tokenId){
         try{
             if(isTokenBlacklisted(tokenId)){
                 return false;
@@ -91,6 +92,33 @@ public class TokenCacheService {
         }catch(Exception e){
             logger.error("Failed to check token validity: {}",tokenId,e);
             return false;
+        }
+    }
+
+    /**
+     * 获取token信息
+     **/
+    private Map<String, Object> getTokenInfo(String tokenId){
+        try{
+            String key = TOKEN_PREFIX + tokenId;
+            Object tokenInfo = redisTemplate.opsForValue().get(key);
+            return tokenInfo!= null ? (Map<String, Object>) tokenInfo : null;
+        }catch(Exception e){
+            logger.error("Failed to get token info: {}", tokenId, e);
+            return null;
+        }
+    }
+
+    public void blacklistToken(String tokenId, long expireTimeMs){
+        try{
+            String key = BLACKLIST_PREFIX + tokenId;
+            long ttlSeconds = Math.max((expireTimeMs - System.currentTimeMillis()) / 1000, 0);
+            if(ttlSeconds>0){
+                redisTemplate.opsForValue().set(key, System.currentTimeMillis(),ttlSeconds,TimeUnit.SECONDS);
+                logger.debug("Token blacklisted: {}", tokenId);
+            }
+        }catch (Exception e){
+            logger.error("Failed to blacklist token: {}", tokenId, e);
         }
     }
 
@@ -120,6 +148,24 @@ public class TokenCacheService {
         }
     }
 
+    private void removeAllUserToken(String userId){
+        try{
+            String userTokenKey = USER_TOKENS_PREFIX + userId + ":tokens";
+            Set<Object> tokenIds = redisTemplate.opsForSet().members(userTokenKey);
+
+            if(tokenIds != null && !tokenIds.isEmpty()){
+                for(Object tokenId : tokenIds){
+                    removeToken(tokenId.toString(),null);
+                }
+                redisTemplate.delete(userTokenKey);
+                logger.info("All tokens removed for user: {}", userId);
+            }
+        }catch (Exception e){
+            logger.error("Failed to remove all user tokens: {}", userId, e);
+        }
+    }
+
+
     private void removeTokenFromUser(String userId, String tokenId) {
         try {
             String key = USER_TOKENS_PREFIX + userId + ":tokens";
@@ -129,4 +175,43 @@ public class TokenCacheService {
         }
     }
 
+    private long getUserActiveTokenCount(String userId){
+        try{
+            String key = USER_TOKENS_PREFIX + userId + ":tokens";
+            Long count = redisTemplate.opsForSet().size(key);
+            return count!= null ? count : 0;
+
+        }catch (Exception e){
+            logger.error("Failed to get user active token count: {}", userId, e);
+            return 0;
+        }
+    }
+
+    public boolean isRefreshTokenValid(String refreshTokenId) {
+        try {
+            String key = REFRESH_PREFIX + refreshTokenId;
+            return Boolean.TRUE.equals(redisTemplate.hasKey(key));
+        } catch (Exception e) {
+            logger.error("Failed to check refresh token validity: {}", refreshTokenId, e);
+            return false;
+        }
+    }
+
+    public void removeAllUserTokens(String userId){
+        try{
+            String userTokenKey = USER_TOKENS_PREFIX + userId + ":tokens";
+            Set<Object> tokenIds = redisTemplate.opsForSet().members(userTokenKey);
+
+            if(tokenIds != null && !tokenIds.isEmpty()){
+                for(Object tokenId : tokenIds){
+                    removeToken(tokenId.toString(),null);
+                }
+            }
+
+            redisTemplate.delete(userTokenKey);
+            logger.info("All tokens removed for user: {}", userId);
+        } catch (Exception e) {
+            logger.error("Failed to remove all user tokens: {}", userId, e);
+        }
+    }
 }
